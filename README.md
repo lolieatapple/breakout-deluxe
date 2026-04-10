@@ -2,6 +2,8 @@
 
 A feature-rich Breakout clone built with **Rust** and **[Macroquad](https://macroquad.rs/)**.
 
+![Screenshot](assets/screenshot.png)
+
 ## Features
 
 - **Built-in Laser Cannons** - Hold click or spacebar to shoot bullets from the paddle
