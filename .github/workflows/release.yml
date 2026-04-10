@@ -25,6 +25,16 @@ jobs:
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
 
+      - name: Create .app bundle
+        run: |
+          ARCH=$(echo "${{ matrix.target }}" | cut -d- -f1)
+          APP="Breakout.app"
+          mkdir -p "$APP/Contents/MacOS"
+          mkdir -p "$APP/Contents/Resources"
+          cp target/${{ matrix.target }}/release/breakout "$APP/Contents/MacOS/"
+          cp assets/Info.plist "$APP/Contents/"
+          cp assets/AppIcon.icns "$APP/Contents/Resources/"
+
       - name: Import Apple certificate
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
@@ -49,34 +59,27 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "ci" "$KEYCHAIN_PATH"
           security list-keychains -d user -s "$KEYCHAIN_PATH" login.keychain-db
 
-      - name: Sign binary
-        env:
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      - name: Sign .app bundle
         run: |
           KEYCHAIN_PATH=$RUNNER_TEMP/build.keychain-db
           security unlock-keychain -p "ci" "$KEYCHAIN_PATH"
           IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" | grep "Developer ID Application" | head -1 | awk -F'"' '{print $2}')
-          codesign --force --options runtime --sign "$IDENTITY" --keychain "$KEYCHAIN_PATH" target/${{ matrix.target }}/release/breakout
+          codesign --force --deep --options runtime --sign "$IDENTITY" --keychain "$KEYCHAIN_PATH" Breakout.app
 
-      - name: Notarize binary
+      - name: Notarize .app bundle
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          ARCH=$(echo "${{ matrix.target }}" | cut -d- -f1)
-          ZIP_NAME="breakout-macos-${ARCH}.zip"
-          ditto -c -k target/${{ matrix.target }}/release/breakout "$ZIP_NAME"
-          xcrun notarytool submit "$ZIP_NAME" --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait
+          ditto -c -k Breakout.app Breakout-notarize.zip
+          xcrun notarytool submit Breakout-notarize.zip --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait
+          xcrun stapler staple Breakout.app
 
       - name: Package
         run: |
           ARCH=$(echo "${{ matrix.target }}" | cut -d- -f1)
-          ZIP_NAME="breakout-macos-${ARCH}.zip"
-          # Re-zip the signed binary cleanly
-          rm -f "$ZIP_NAME"
-          cd target/${{ matrix.target }}/release
-          zip "../../../${ZIP_NAME}" breakout
+          ditto -c -k Breakout.app "breakout-macos-${ARCH}.zip"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
