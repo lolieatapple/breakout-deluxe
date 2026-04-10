@@ -76,16 +76,21 @@ jobs:
           xcrun notarytool submit Breakout-notarize.zip --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait
           xcrun stapler staple Breakout.app
 
-      - name: Package
+      - name: Create DMG
         run: |
           ARCH=$(echo "${{ matrix.target }}" | cut -d- -f1)
-          ditto -c -k Breakout.app "breakout-macos-${ARCH}.zip"
+          DMG_NAME="Breakout-macos-${ARCH}.dmg"
+          # Create a temporary folder for DMG contents
+          mkdir -p dmg-stage
+          cp -R Breakout.app dmg-stage/
+          ln -s /Applications dmg-stage/Applications
+          hdiutil create -volname "Breakout" -srcfolder dmg-stage -ov -format UDZO "$DMG_NAME"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: mac-${{ matrix.target }}
-          path: breakout-macos-*.zip
+          path: Breakout-macos-*.dmg
 
   build-linux:
     runs-on: ubuntu-latest
@@ -151,6 +156,8 @@ jobs:
         with:
           draft: false
           generate_release_notes: true
-          files: dist/*.zip
+          files: |
+            dist/*.dmg
+            dist/*.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
