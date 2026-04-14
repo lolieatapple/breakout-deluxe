@@ -5,16 +5,16 @@ const W: f32 = 900.0;
 const H: f32 = 700.0;
 
 // ── Paddle ──
-const PADDLE_W_DEFAULT: f32 = 120.0;
+const PADDLE_W_DEFAULT: f32 = 105.0;
 const PADDLE_H: f32 = 14.0;
 const PADDLE_SPEED: f32 = 600.0;
 const PADDLE_Y: f32 = H - 44.0;
 
 // ── Ball ──
 const BALL_R: f32 = 7.0;
-const BALL_SPEED_INIT: f32 = 340.0;
-const BALL_SPEED_INC: f32 = 5.0;
-const BALL_SPEED_MAX: f32 = 700.0;
+const BALL_SPEED_INIT: f32 = 380.0;
+const BALL_SPEED_INC: f32 = 8.0;
+const BALL_SPEED_MAX: f32 = 750.0;
 
 // ── Bricks ──
 const COLS: usize = 12;
@@ -27,12 +27,12 @@ const BTOP: f32 = 60.0;
 const BULLET_W: f32 = 4.0;
 const BULLET_H: f32 = 14.0;
 const BULLET_SPEED: f32 = 600.0;
-const SHOOT_COOLDOWN: f32 = 0.15;
+const SHOOT_COOLDOWN: f32 = 0.22;
 
 // ── Powerups ──
 const PU_SIZE: f32 = 22.0;
 const PU_SPEED: f32 = 140.0;
-const PU_DROP_CHANCE: f32 = 0.30;
+const PU_DROP_CHANCE: f32 = 0.25;
 
 // ── Particles ──
 const LIVES_INIT: u32 = 3;
@@ -165,17 +165,20 @@ fn level_bricks(level: u32) -> Vec<Brick> {
 
     let pattern = (level - 1) % 8;
 
-    let rows: usize = match pattern {
-        0 => 6,
-        1 => 8,
-        2 => 7,
-        3 => 9,
-        4 => 8,
-        5 => 10,
-        6 => 9,
-        7 => 10,
-        _ => 6,
+    let base_rows: usize = match pattern {
+        0 => 11,
+        1 => 12,
+        2 => 11,
+        3 => 12,
+        4 => 12,
+        5 => 13,
+        6 => 12,
+        7 => 14,
+        _ => 11,
     };
+    // Add extra rows at higher levels (max +4 extra rows)
+    let extra_rows = ((level.saturating_sub(3)) as usize / 2).min(4);
+    let rows = (base_rows + extra_rows).min(16);
 
     for row in 0..rows {
         for col in 0..COLS {
@@ -183,45 +186,60 @@ fn level_bricks(level: u32) -> Vec<Brick> {
             let y = BTOP + row as f32 * (BH + BGAP);
 
             let present = match pattern {
-                0 => true, // full grid
+                0 => {
+                    // "Layered Defense": two thick bands + pillars + scattered mines
+                    let upper = row < 3;
+                    let lower = row >= rows - 3;
+                    let pillars = col % 4 == 0 && row >= 3 && row < rows - 3;
+                    let mid_wall = row == rows / 2;
+                    let scattered = (row + col * 3) % 5 == 0 && row >= 3 && row < rows - 3;
+                    upper || lower || pillars || mid_wall || scattered
+                }
                 1 => {
-                    // diamond
+                    // "Diamond Fortress": diamond with filled core
                     let cr = (row as f32 - rows as f32 / 2.0).abs();
                     let cc = (col as f32 - COLS as f32 / 2.0 + 0.5).abs();
                     cr + cc < (rows.min(COLS) as f32 / 2.0 + 1.0)
                 }
                 2 => {
-                    // checkerboard
-                    (row + col) % 2 == 0
+                    // "Labyrinth": maze-like walls and corridors
+                    let h_walls = row % 3 == 0;
+                    let v_walls = col % 4 == 0 && row % 3 != 1;
+                    let fill = (row + col) % 5 == 0;
+                    h_walls || v_walls || fill
                 }
                 3 => {
-                    // zigzag
+                    // "Thick Zigzag": dense zigzag with only narrow gaps
                     let offset = if row % 2 == 0 { 0 } else { 1 };
-                    (col + offset) % 3 != 0
+                    (col + offset) % 4 != 0 || row % 3 == 0
                 }
                 4 => {
-                    // V shape
-                    let mid = COLS / 2;
-                    let dist = if col < mid { mid - col } else { col - mid + 1 };
-                    row < dist + 2
+                    // "Pincer": dense top and bottom converging to center
+                    let mid = rows / 2;
+                    let dist_from_mid = if row < mid { mid - row } else { row - mid };
+                    let fill_cols = (dist_from_mid * 2 + 4).min(COLS);
+                    let start = (COLS - fill_cols) / 2;
+                    col >= start && col < start + fill_cols
                 }
                 5 => {
-                    // border + cross
-                    row == 0 || row == rows - 1 || col == 0 || col == COLS - 1
-                        || col == COLS / 2 || col == COLS / 2 - 1
-                        || row == rows / 2
+                    // "Concentric Rings": nested rectangles
+                    let ring = row.min(rows - 1 - row).min(col).min(COLS - 1 - col);
+                    ring % 2 == 0
                 }
                 6 => {
-                    // spiral-ish arcs
+                    // "Dense Spiral": tighter spiral arcs
                     let r = row as f32;
                     let c = col as f32;
-                    ((r * 1.5 + c) as u32) % 4 != 0
+                    ((r * 1.5 + c) as u32) % 3 != 0
                 }
                 7 => {
-                    // fortress
-                    let is_wall = row < 2 || col == 0 || col == COLS - 1;
-                    let is_tower = (col == 2 || col == COLS - 3) && row < 4;
-                    is_wall || is_tower || (row == 4 && col > 2 && col < COLS - 3)
+                    // "Fortress Supreme": walls, towers, inner chambers, murder holes
+                    let outer_wall = row < 2 || row >= rows - 2 || col == 0 || col == COLS - 1;
+                    let towers = (col == 2 || col == COLS - 3) && row < 5;
+                    let inner_wall = row == 5 && col > 1 && col < COLS - 1;
+                    let chambers = (row == rows / 2 || row == rows / 2 + 1) && col > 2 && col < COLS - 3;
+                    let pillars = (col == COLS / 3 || col == 2 * COLS / 3) && row > 5 && row < rows - 2;
+                    outer_wall || towers || inner_wall || chambers || pillars
                 }
                 _ => true,
             };
@@ -232,17 +250,32 @@ fn level_bricks(level: u32) -> Vec<Brick> {
 
             // Determine brick kind based on level difficulty
             let kind = determine_brick_kind(level, row, col, rows, pattern);
+            // Brick HP scales with level
             let (hits, max_hits) = match kind {
-                BrickKind::Normal => (1, 1),
-                BrickKind::Tough => (2, 2),
-                BrickKind::Armored => (3, 3),
+                BrickKind::Normal => {
+                    let hp = if level >= 8 { 2 } else { 1 };
+                    (hp, hp)
+                }
+                BrickKind::Tough => {
+                    let hp = (2 + level / 5).min(4);
+                    (hp, hp)
+                }
+                BrickKind::Armored => {
+                    let hp = (3 + level / 4).min(6);
+                    (hp, hp)
+                }
                 BrickKind::Explosive => (1, 1),
                 BrickKind::Indestructible => (999, 999),
-                BrickKind::Moving => (1, 1),
+                BrickKind::Moving => {
+                    let hp = if level >= 6 { 2 } else { 1 };
+                    (hp, hp)
+                }
             };
 
             let color = brick_color(kind, row, level);
 
+            // Moving bricks get faster at higher levels
+            let move_speed = (80.0 + level as f32 * 20.0).min(220.0);
             bricks.push(Brick {
                 rect: Rect::new(x, y, BW, BH),
                 color,
@@ -251,7 +284,7 @@ fn level_bricks(level: u32) -> Vec<Brick> {
                 hits,
                 max_hits,
                 move_dir: if kind == BrickKind::Moving {
-                    if col % 2 == 0 { 60.0 } else { -60.0 }
+                    if col % 2 == 0 { move_speed } else { -move_speed }
                 } else {
                     0.0
                 },
@@ -262,28 +295,94 @@ fn level_bricks(level: u32) -> Vec<Brick> {
 }
 
 fn determine_brick_kind(level: u32, row: usize, col: usize, rows: usize, pattern: u32) -> BrickKind {
-    // More special bricks at higher levels
-    if pattern == 7 && (row < 2 || col == 0 || col == COLS - 1) && level >= 3 {
-        return BrickKind::Armored;
-    }
-    if level >= 6 && row == 0 && col % 4 == 0 {
+    // ═══════════════════════════════════════════════════════════
+    // Armored = bullet-proof (only ball can break). Key anti-laser mechanic.
+    // Indestructible = permanent obstacles from level 3.
+    // All other types present from level 1.
+    // ═══════════════════════════════════════════════════════════
+
+    // ── Indestructible barriers (level 3+): force angle play ──
+    if level >= 3 && row == 0 && col % 4 == 2 {
         return BrickKind::Indestructible;
     }
-    if level >= 4 && row == rows / 2 && (col == COLS / 4 || col == 3 * COLS / 4) {
-        return BrickKind::Explosive;
+    if level >= 4 && row == rows / 2 && col % 3 != 0 {
+        return BrickKind::Indestructible;
     }
-    if level >= 5 && row % 3 == 0 && col % 5 == 2 {
-        return BrickKind::Moving;
+    if level >= 6 && row == rows / 3 && col % 4 != 0 {
+        return BrickKind::Indestructible;
     }
-    if level >= 3 && row < 2 {
+    if level >= 8 && (col == 0 || col == COLS - 1) && row > 2 && row < rows - 2 {
+        return BrickKind::Indestructible;
+    }
+
+    // ── Pattern-specific fortress armor ──
+    if pattern == 7 && (row < 2 || col == 0 || col == COLS - 1) {
         return BrickKind::Armored;
     }
-    if row < (level.min(4) as usize) {
-        return BrickKind::Tough;
+
+    // ── Armored bricks (bullet-proof!): present from level 1 ──
+    // Top row: armored wall (lasers can't clear the top line)
+    if row == 0 && col % 2 == 0 {
+        return BrickKind::Armored;
     }
-    if level >= 2 && (row + col) % 7 == 0 {
+    // Second row: armored checkpoints
+    if row == 1 && col % 3 == 0 {
+        return BrickKind::Armored;
+    }
+    // Mid-field armored band (blocks laser paths)
+    if row == rows / 2 && col % 3 == 1 {
+        return BrickKind::Armored;
+    }
+    // Level 2+: armored shields scattered (protect bricks above from lasers)
+    if level >= 2 && row == rows - 3 && col % 3 == 0 {
+        return BrickKind::Armored;
+    }
+    // Level 4+: armored mesh throughout
+    if level >= 4 && row % 3 == 0 && col % 4 == 0 && row > 1 {
+        return BrickKind::Armored;
+    }
+    // Level 6+: dense armored layer
+    if level >= 6 && row % 2 == 0 && col % 3 == 0 && row > 0 {
+        return BrickKind::Armored;
+    }
+
+    // ── Explosive bricks: risk/reward from level 1 ──
+    if row == rows / 2 && (col == COLS / 4 || col == 3 * COLS / 4) {
         return BrickKind::Explosive;
     }
+    if (row + col) % 7 == 0 && row > 0 {
+        return BrickKind::Explosive;
+    }
+    if level >= 4 && row >= rows - 3 && col % 3 == 1 {
+        return BrickKind::Explosive;
+    }
+    if level >= 7 && row < 3 && (col < 2 || col >= COLS - 2) && (row + col) % 2 == 0 {
+        return BrickKind::Explosive;
+    }
+
+    // ── Moving bricks: unpredictable from level 1 ──
+    if row % 4 == 2 && col % 5 == 3 {
+        return BrickKind::Moving;
+    }
+    if level >= 2 && row % 3 == 1 && col % 4 == 0 {
+        return BrickKind::Moving;
+    }
+    if level >= 4 && row % 2 == 1 && col % 5 == 2 {
+        return BrickKind::Moving;
+    }
+
+    // ── Tough bricks: thick defense top and bottom ──
+    if row < 3 {
+        return BrickKind::Tough;
+    }
+    if row >= rows.saturating_sub(2) {
+        return BrickKind::Tough;
+    }
+    let tough_depth = (3 + level.saturating_sub(1)).min(rows as u32 / 2) as usize;
+    if row < tough_depth {
+        return BrickKind::Tough;
+    }
+
     BrickKind::Normal
 }
 
@@ -351,6 +450,8 @@ struct Game {
     // Timers for visual
     screen_shake: f32,
     level_clear_timer: f32,
+    // Brick descent
+    brick_descent_speed: f32,
     // Background stars
     stars: Vec<(f32, f32, f32)>,
 }
@@ -392,6 +493,7 @@ impl Game {
             shoot_cooldown: 0.0,
             screen_shake: 0.0,
             level_clear_timer: 0.0,
+            brick_descent_speed: 0.0,
             stars,
         }
     }
@@ -402,12 +504,19 @@ impl Game {
         self.balls.clear();
         self.bullets.clear();
         self.powerups.clear();
-        self.paddle_w = PADDLE_W_DEFAULT;
-        self.ball_speed = BALL_SPEED_INIT + (level - 1) as f32 * 20.0;
+        // Paddle shrinks at higher levels (min 65px)
+        self.paddle_w = (PADDLE_W_DEFAULT - (level.saturating_sub(1)) as f32 * 5.0).max(65.0);
+        // Ball speed ramps more aggressively: +30 per level (was +20)
+        self.ball_speed = (BALL_SPEED_INIT + (level - 1) as f32 * 30.0).min(BALL_SPEED_MAX);
         self.fire_timer = 0.0;
+        self.laser_timer = 0.0;
+        self.shield_active = false;
+        self.shield_hits = 0;
         self.magnet_active = false;
         self.magnet_timer = 0.0;
         self.combo = 0;
+        // Bricks descend: slow at first, faster each level
+        self.brick_descent_speed = (2.0 + level as f32 * 1.5).min(18.0);
         self.spawn_ball_on_paddle();
         self.state = GameState::Playing;
     }
@@ -453,9 +562,11 @@ impl Game {
     }
 
     fn maybe_drop_powerup(&mut self, pos: Vec2) {
-        if rand::gen_range(0.0, 1.0) < PU_DROP_CHANCE {
-            // Negative powerups become more likely at higher levels
-            let negative_chance = (self.level as f32 * 0.04).min(0.35);
+        // Drop rate decreases with level (min 12%)
+        let drop_chance = (PU_DROP_CHANCE - self.level as f32 * 0.012).max(0.12);
+        if rand::gen_range(0.0, 1.0) < drop_chance {
+            // Negative powerups ramp faster, cap at 50% (was 35%)
+            let negative_chance = (self.level as f32 * 0.06).min(0.50);
             let kind = if rand::gen_range(0.0, 1.0) < negative_chance {
                 if rand::gen_range(0.0, 1.0) < 0.5 {
                     PowerupKind::ShrinkPaddle
@@ -498,10 +609,10 @@ impl Game {
                 }
             }
             PowerupKind::WidePaddle => {
-                self.paddle_w = (self.paddle_w + 40.0).min(240.0);
+                self.paddle_w = (self.paddle_w + 20.0).min(180.0);
             }
             PowerupKind::ShrinkPaddle => {
-                self.paddle_w = (self.paddle_w - 30.0).max(50.0);
+                self.paddle_w = (self.paddle_w - 35.0).max(45.0);
                 self.screen_shake = 0.15;
             }
             PowerupKind::LaserUpgrade => {
@@ -510,38 +621,38 @@ impl Game {
             PowerupKind::SlowBall => {
                 for ball in &mut self.balls {
                     let speed = ball.vel.length();
-                    if speed > 200.0 {
+                    if speed > 280.0 {
                         let dir = ball.vel.normalize();
-                        ball.vel = dir * (speed * 0.6);
+                        ball.vel = dir * (speed * 0.75);
                     }
                 }
-                self.ball_speed = (self.ball_speed * 0.7).max(250.0);
+                self.ball_speed = (self.ball_speed * 0.8).max(300.0);
             }
             PowerupKind::FastBall => {
                 for ball in &mut self.balls {
                     let speed = ball.vel.length();
                     let dir = ball.vel.normalize();
-                    ball.vel = dir * (speed * 1.4).min(BALL_SPEED_MAX);
+                    ball.vel = dir * (speed * 1.5).min(BALL_SPEED_MAX);
                 }
-                self.ball_speed = (self.ball_speed * 1.3).min(BALL_SPEED_MAX);
-                self.screen_shake = 0.2;
+                self.ball_speed = (self.ball_speed * 1.4).min(BALL_SPEED_MAX);
+                self.screen_shake = 0.25;
             }
             PowerupKind::ExtraLife => {
                 self.lives += 1;
             }
             PowerupKind::Shield => {
                 self.shield_active = true;
-                self.shield_hits = 3;
+                self.shield_hits = 2;
             }
             PowerupKind::FireBall => {
-                self.fire_timer = 10.0;
+                self.fire_timer = 6.0;
                 for ball in &mut self.balls {
                     ball.fire = true;
                 }
             }
             PowerupKind::Magnet => {
                 self.magnet_active = true;
-                self.magnet_timer = 12.0;
+                self.magnet_timer = 8.0;
             }
         }
     }
@@ -678,6 +789,28 @@ impl Game {
             }
         }
 
+        // ── Brick descent (only while ball is in play) ──
+        if self.balls.iter().any(|b| b.active) {
+            for brick in &mut self.bricks {
+                brick.rect.y += self.brick_descent_speed * dt;
+            }
+            // If any destroyable brick reaches the paddle zone → lose a life, restart level
+            let overflow = self.bricks.iter().any(|b| {
+                b.alive && b.kind != BrickKind::Indestructible
+                    && b.rect.y + b.rect.h >= PADDLE_Y
+            });
+            if overflow {
+                self.screen_shake = 0.5;
+                self.lives = self.lives.saturating_sub(1);
+                if self.lives == 0 {
+                    self.state = GameState::Lost;
+                } else {
+                    self.start_level(self.level);
+                }
+                return;
+            }
+        }
+
         // ── Update particles ──
         for p in &mut self.particles {
             p.pos += p.vel * dt;
@@ -706,14 +839,20 @@ impl Game {
         // Check bullet-brick collisions (separate pass to avoid borrow issues)
         let mut bullet_kills = Vec::new();
         let mut bullet_particles: Vec<(Vec2, Color)> = Vec::new();
+        let mut bullet_sparks: Vec<Vec2> = Vec::new();
         let mut bullet_powerup_drops: Vec<Vec2> = Vec::new();
         for bullet in &mut self.bullets {
             if !bullet.alive { continue; }
             let brect = Rect::new(bullet.pos.x, bullet.pos.y, BULLET_W, BULLET_H);
             for (i, brick) in self.bricks.iter_mut().enumerate() {
-                if !brick.alive || brick.kind == BrickKind::Indestructible { continue; }
+                if !brick.alive { continue; }
                 if brect.overlaps(&brick.rect) {
                     bullet.alive = false;
+                    // Armored and Indestructible bricks deflect bullets (spark effect)
+                    if brick.kind == BrickKind::Armored || brick.kind == BrickKind::Indestructible {
+                        bullet_sparks.push(vec2(bullet.pos.x + BULLET_W / 2.0, bullet.pos.y));
+                        break;
+                    }
                     brick.hits = brick.hits.saturating_sub(1);
                     if brick.hits == 0 {
                         brick.alive = false;
@@ -731,6 +870,9 @@ impl Game {
         }
         for (pos, color) in bullet_particles {
             self.spawn_particles(pos, color, 4);
+        }
+        for pos in bullet_sparks {
+            self.spawn_particles(pos, Color::from_rgba(220, 220, 255, 255), 3);
         }
         for pos in bullet_powerup_drops {
             self.maybe_drop_powerup(pos);
@@ -921,7 +1063,8 @@ impl Game {
             if self.lives == 0 {
                 self.state = GameState::Lost;
             } else {
-                self.paddle_w = PADDLE_W_DEFAULT;
+                // Reset to level-scaled width (no free width on death)
+                self.paddle_w = (PADDLE_W_DEFAULT - (self.level.saturating_sub(1)) as f32 * 5.0).max(65.0);
                 self.spawn_ball_on_paddle();
             }
         }
@@ -1152,6 +1295,11 @@ impl Game {
         draw_text(&format!("Score: {}", self.score), 10.0, 28.0, 28.0, WHITE);
         draw_text(&format!("Level {}", self.level), W / 2.0 - 30.0, 28.0, 28.0,
             Color::from_rgba(200, 200, 255, 200));
+
+        // Remaining bricks counter
+        let remaining = self.bricks.iter().filter(|b| b.alive && b.kind != BrickKind::Indestructible).count();
+        let rc = if remaining < 10 { Color::from_rgba(255, 100, 100, 220) } else { Color::from_rgba(180, 180, 200, 180) };
+        draw_text(&format!("{} left", remaining), W / 2.0 + 55.0, 28.0, 22.0, rc);
 
         // Lives
         for i in 0..self.lives {
